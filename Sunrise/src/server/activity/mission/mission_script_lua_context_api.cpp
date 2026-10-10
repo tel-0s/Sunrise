@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -6,6 +7,7 @@
 #include <string_view>
 #include <tuple>
 
+#include "../../../core/logging/log.h"
 #include "../../../state/activity/membership/definition.h"
 #include "mission_script_lua_internal.h"
 #include "mission_script_lua_names.h"
@@ -207,6 +209,49 @@ namespace {
     return 1;
 }
 
+/**
+ * Writes one script-authored line to the server log. The sandbox has no print, so this is the
+ * only way a script can report what it is doing. The line is an info event, so it shows once
+ * core.logging.levels.server is info or debug. Quotes and control characters are replaced so the
+ * message stays one parseable msg field.
+ * @param state Lua call holding the context and the message (a string or a number).
+ * @return Nothing.
+ */
+[[nodiscard]] int context_log(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    const std::string_view text = lua_string_view(state, 2);
+    CallFrame& frame = active_frame(state);
+    if (frame.scriptLogLines > kScriptLogLinesPerCallback) {
+        return 0;
+    }
+    const Impl* const impl = impl_from_state(state);
+    if (frame.scriptLogLines == kScriptLogLinesPerCallback) {
+        ++frame.scriptLogLines;
+        core::log::writef(
+            core::log::Channel::server,
+            core::log::Level::info,
+            "ev=mission_script stage=script_log activity=%s result=suppressed limit=%u",
+            impl->identity.activityId.data(),
+            static_cast<unsigned>(kScriptLogLinesPerCallback));
+        return 0;
+    }
+    ++frame.scriptLogLines;
+    std::array<char, kScriptLogTextCapacity + 1> clean{};
+    const std::size_t length = (std::min)(text.size(), kScriptLogTextCapacity);
+    for (std::size_t index = 0; index < length; ++index) {
+        const auto byte = static_cast<unsigned char>(text[index]);
+        const bool control = byte < 0x20U || byte == 0x7FU;
+        clean[index] = byte == '"' ? '\'' : control ? ' ' : static_cast<char>(byte);
+    }
+    core::log::writef(core::log::Channel::server,
+                      core::log::Level::info,
+                      "ev=mission_script stage=script_log activity=%s msg=\"%s\"%s",
+                      impl->identity.activityId.data(),
+                      clean.data(),
+                      text.size() > length ? " truncated=1" : "");
+    return 0;
+}
+
 } // namespace
 
 /** Resolves the squad one Lua argument names, by handle or by index. */
@@ -393,6 +438,8 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
         lua_pushcfunction(state, &context_start_timer);
     } else if (key == "cancel_timer") {
         lua_pushcfunction(state, &context_cancel_timer);
+    } else if (key == "log") {
+        lua_pushcfunction(state, &context_log);
     } else if (!push_key_context_member(state, key)) {
         lua_pushnil(state);
     }

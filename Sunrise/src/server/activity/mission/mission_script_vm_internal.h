@@ -83,6 +83,11 @@ enum class Handler : std::uint8_t {
     load,
 };
 
+/** Script log lines one callback may write; the next one becomes a single suppression notice. */
+inline constexpr std::uint8_t kScriptLogLinesPerCallback = 16;
+/** Message bytes one script log line keeps; longer text is cut and marked truncated. */
+inline constexpr std::size_t kScriptLogTextCapacity = 240;
+
 /** Native values available only while one callback is inside lua_pcall. */
 struct CallFrame final {
     Candidate candidate{};
@@ -94,6 +99,8 @@ struct CallFrame final {
     bool instructionExceeded{};
     bool memoryExceeded{};
     bool intentAllocationFailed{};
+    /** Lines context:log wrote in this callback, so a loop cannot flood the log. */
+    std::uint8_t scriptLogLines{};
 };
 
 /** Complete per-activity VM state; no allocation is shared with another instance. */
