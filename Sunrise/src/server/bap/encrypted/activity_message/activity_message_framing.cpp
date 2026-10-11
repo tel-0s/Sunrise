@@ -5,6 +5,7 @@
 #include <limits>
 #include <span>
 
+#include "../../../../core/logging/log.h"
 #include "../../../../middleware/bap/activity_message/cinematic_incident.h"
 #include "../../../../middleware/bap/activity_message/entity_authority.h"
 #include "../../../../middleware/bap/activity_message/incident.h"
@@ -145,6 +146,85 @@ constexpr std::array<FramingRoute, 19> kFramingRoutes{{
     {IngressAdapter::highWater, receipts::frame_high_water},
 }};
 
+/**
+ * Finds the private link whose mission advertised one public link's host, for the same account.
+ * The BAP pump holds the session lock for every inbound message, so this reads the table directly.
+ * @param binding Public-target link the message arrived on.
+ * @return The single matching private link, or null when there is none or more than one.
+ */
+[[nodiscard]] const Session*
+private_source_link_locked(const ActivityClientBinding& binding) noexcept {
+    const Session* publicLink = nullptr;
+    for (const Session& session : sessions()) {
+        if (session.id != 0 && session.authenticated
+            && session.activity.role == ActivityClientRole::publicTarget
+            && session.activity.bindingGeneration == binding.bindingGeneration
+            && state::activity::same_binding(session.activity.session, binding.session)) {
+            publicLink = &session;
+            break;
+        }
+    }
+    if (publicLink == nullptr) {
+        return nullptr;
+    }
+    const Session* selected = nullptr;
+    for (const Session& session : sessions()) {
+        if (session.id == 0 || !session.authenticated
+            || session.activity.role != ActivityClientRole::privateCurrent
+            || session.accountHandle != publicLink->accountHandle
+            || !state::activity::same_binding(session.activity.session, binding.source)) {
+            continue;
+        }
+        if (selected != nullptr) {
+            return nullptr;
+        }
+        selected = &session;
+    }
+    return selected;
+}
+
+/**
+ * Hands a public link's player-trigger or cinematic report to the private mission behind it.
+ * A private mission can include a bubble the packages author as public, such as Homecoming's
+ * plaza. Sunrise hosts that bubble with a public activity, and the client then reports the bubble's
+ * triggers and cinematics on the public link, where no mission script runs. The objects are still
+ * the mission's: their groups are on the private link's roster. So a report naming one of those
+ * groups is submitted to the private link as well.
+ * @param binding Link the incident arrived on.
+ * @param input Incident already submitted for that link.
+ */
+void forward_to_private_source(const ActivityClientBinding& binding,
+                               const server::activity::host::IncidentInput& input) noexcept {
+    if (binding.role != ActivityClientRole::publicTarget
+        || (!input.hasPlayerTrigger && !input.hasCinematic)) {
+        return;
+    }
+    const Session* const source = private_source_link_locked(binding);
+    if (source == nullptr) {
+        return;
+    }
+    const std::uint32_t registryKey =
+        input.hasPlayerTrigger ? input.playerTrigger.registryKey : input.cinematic.registryKey;
+    if (find_roster_decode_entry(
+            source->activityRosterDecode, source->activity.bindingGeneration, registryKey)
+        == nullptr) {
+        return;
+    }
+    server::activity::host::IncidentInput forwarded = input;
+    forwarded.binding = source->activity.session;
+    forwarded.sourceGeneration = source->activity.bindingGeneration;
+    const bool submitted = server::activity::host::submit_incident(forwarded);
+    core::log::writef(core::log::Channel::server,
+                      core::log::Level::debug,
+                      "ev=activity stage=incident_forward result=%s kind=%s key=0x%08X "
+                      "from=0x%llX to=0x%llX",
+                      submitted ? "ok" : "refused",
+                      input.hasPlayerTrigger ? "player_trigger" : "cinematic",
+                      registryKey,
+                      static_cast<unsigned long long>(binding.session.sessionId),
+                      static_cast<unsigned long long>(source->activity.session.sessionId));
+}
+
 } // namespace
 
 /**
@@ -244,6 +324,7 @@ bool frame_only(const ActivityClientBinding& binding,
         if (!server::activity::host::submit_incident(input)) {
             report_message(request.messageType, request.sessionId, "host_ingress_refused");
         }
+        forward_to_private_source(binding, input);
     }
     return true;
 }
