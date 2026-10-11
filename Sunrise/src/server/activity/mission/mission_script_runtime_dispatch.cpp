@@ -12,6 +12,7 @@
 #include "../../../state/activity/membership/activity_membership_query.h"
 #include "../../../state/build_data/runtime.h"
 #include "../../../state/build_data/spawn_sets/spawn_set_catalog.h"
+#include "../../bap/world_reward.h"
 #include "../../gameplay/squad_entity_retirement.h"
 #include "../activity_sdk_device_runtime.h"
 #include "../activity_sdk_lifetime_runtime.h"
@@ -245,6 +246,33 @@ void dispatch_intent(RuntimeInstance& instance, std::uint64_t now) noexcept {
             instance.view.binding.sessionId, intent.active);
         static_cast<void>(
             complete_local_effect(instance, intent.active ? "spawn_held" : "spawn_released"));
+        return;
+    }
+    case lua_vm::IntentKind::grantReward: {
+        // The world-reward queue saves the reward before presenting it, then delivers it through
+        // the inventory peer the same way a world drop arrives.
+        ::sunrise::state::build_data::items::Definition item{};
+        if (!::sunrise::state::build_data::find_item_definition_hash(intent.firstRow, item)) {
+            refuse_delivery(
+                instance, "reward_refused", "unknown_item", host::EffectOutcome::refused);
+            return;
+        }
+        const bool queued =
+            intent.entryIndex > 0
+                ? ::sunrise::server::bap::arm_world_profile_item_acquisition(item.definitionIndex,
+                                                                             intent.entryIndex)
+                : ::sunrise::server::bap::arm_world_item_acquisition(item.definitionIndex);
+        if (!queued) {
+            refuse_delivery(
+                instance, "reward_refused", "queue_unavailable", host::EffectOutcome::refused);
+            return;
+        }
+        core::log::writef(core::log::Channel::server,
+                          core::log::Level::info,
+                          "ev=mission_script stage=reward item=0x%08X quantity=%d result=queued",
+                          static_cast<unsigned>(intent.firstRow),
+                          intent.entryIndex > 0 ? static_cast<int>(intent.entryIndex) : 1);
+        static_cast<void>(complete_local_effect(instance, "reward_queued"));
         return;
     }
     case lua_vm::IntentKind::restartCheckpoint: {

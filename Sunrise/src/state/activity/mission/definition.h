@@ -197,6 +197,8 @@ enum class IntentKind : std::uint8_t {
     watchDamage,
     setGhostLink,
     holdSpawn,
+    /** firstRow carries the item definition hash; entryIndex is a profile quantity, 0 for gear. */
+    grantReward,
 };
 
 /** Actor sequence values belong to one combatant and one SDK/client generation. */
