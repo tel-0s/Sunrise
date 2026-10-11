@@ -30,6 +30,7 @@
 #include "encrypted/queuez/public_subscriptions.h"
 #include "nat_relay_service.h"
 #include "runtime.h"
+#include "world_reward.h"
 
 namespace sunrise::server::bap {
 
@@ -581,13 +582,6 @@ void arm_account_resync_everywhere() noexcept;
 
 /** Holds this peer's full Family-4 refreshes until its acquisition flyout has finished. */
 void arm_acquisition_presentation_hold(Session& session) noexcept;
-
-/** Queues one character item for normal acquisition feedback. */
-[[nodiscard]] bool arm_world_item_acquisition(std::uint16_t itemDefinitionIndex) noexcept;
-
-/** Queues one profile material for normal acquisition feedback. */
-[[nodiscard]] bool arm_world_profile_item_acquisition(std::uint16_t itemDefinitionIndex,
-                                                      std::int32_t quantity) noexcept;
 
 /** Reads the oldest queued world reward without removing it. */
 [[nodiscard]] bool current_world_reward(WorldRewardRequest& request) noexcept;

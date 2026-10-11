@@ -189,6 +189,41 @@ namespace {
     return queue_intent(state, active_frame(state), intent);
 }
 
+/**
+ * Grants one item to the player through the world-reward queue, the path world drops take: the
+ * reward is saved first, then delivered to the selected character with its pickup feedback.
+ * `item` is the authored item definition hash. Gear (weapons, armor) takes no quantity; a profile
+ * material or consumable passes `quantity`. The item is resolved when the request is delivered,
+ * and an unknown one is refused through the effect result.
+ * @param state Lua call holding the context and `{item, quantity?}`.
+ * @return One RequestKey.
+ */
+[[nodiscard]] int context_grant_reward(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    // Only these named arguments belong to this API.
+    static constexpr std::array<std::string_view, 2> kDeclared{"item", "quantity"};
+    refuse_unknown_arguments(state, kDeclared);
+    lua_getfield(state, 2, "item");
+    if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) <= 0
+        || lua_tointeger(state, -1) > (std::numeric_limits<std::uint32_t>::max)()) {
+        return luaL_argerror(state, 2, "grant_reward requires an item definition hash");
+    }
+    Intent intent{};
+    intent.kind = IntentKind::grantReward;
+    intent.firstRow = static_cast<std::uint32_t>(lua_tointeger(state, -1));
+    lua_pop(state, 1);
+    lua_getfield(state, 2, "quantity");
+    if (!lua_isnil(state, -1)) {
+        if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) <= 0
+            || lua_tointeger(state, -1) > (std::numeric_limits<std::int32_t>::max)()) {
+            return luaL_argerror(state, 2, "grant_reward quantity must be a positive integer");
+        }
+        intent.entryIndex = static_cast<std::int32_t>(lua_tointeger(state, -1));
+    }
+    lua_pop(state, 1);
+    return queue_intent(state, active_frame(state), intent);
+}
+
 [[nodiscard]] int context_scene(lua_State* state) {
     static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
     SceneDefinition definition{};
@@ -440,6 +475,8 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
         lua_pushcfunction(state, &context_cancel_timer);
     } else if (key == "log") {
         lua_pushcfunction(state, &context_log);
+    } else if (key == "grant_reward") {
+        lua_pushcfunction(state, &context_grant_reward);
     } else if (!push_key_context_member(state, key)) {
         lua_pushnil(state);
     }
