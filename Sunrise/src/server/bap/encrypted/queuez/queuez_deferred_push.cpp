@@ -194,11 +194,12 @@ selected_character(const state::AccountState& account) noexcept {
     bap::arm_account_resync_elsewhere(session);
     bap::arm_acquisition_presentation_hold(session);
     // Paired with the queue-side line, this measures how long a reward waited for delivery.
-    core::log::writef(core::log::Channel::server,
-                      core::log::Level::info,
-                      "ev=world_reward stage=delivered kind=profile_item item_index=%u request=%llu",
-                      static_cast<unsigned>(request.itemDefinitionIndex),
-                      static_cast<unsigned long long>(request.id));
+    core::log::writef(
+        core::log::Channel::server,
+        core::log::Level::info,
+        "ev=world_reward stage=delivered kind=profile_item item_index=%u request=%llu",
+        static_cast<unsigned>(request.itemDefinitionIndex),
+        static_cast<unsigned long long>(request.id));
     return true;
 }
 
